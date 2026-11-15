@@ -200,3 +200,135 @@ void runEditor(string& fileContent) {
     }
 }
 
+bool extractFunction(const string& code, const string& funcName, string& output) {
+    size_t searchPos = 0;
+    size_t funcPos = string::npos;
+    size_t braceStart = string::npos;
+
+    while ((searchPos = code.find(funcName, searchPos)) != string::npos) {
+        bool leftBoundary = (searchPos == 0) ||
+                            (!isAlnumChar(code[searchPos - 1]) && code[searchPos - 1] != '_');
+        bool rightBoundary = (searchPos + funcName.length() >= code.length()) ||
+                             (!isAlnumChar(code[searchPos + funcName.length()]) && code[searchPos + funcName.length()] != '_');
+
+        if (leftBoundary && rightBoundary) {
+            size_t afterName = searchPos + funcName.length();
+            while (afterName < code.length() && (code[afterName] == ' ' || code[afterName] == '\t' ||
+                                                 code[afterName] == '\n' || code[afterName] == '\r')) {
+                afterName++;
+            }
+            if (afterName < code.length() && code[afterName] == '(') {
+                size_t closeParen = code.find(')', afterName);
+                if (closeParen != string::npos) {
+                    size_t candidateBrace = code.find('{', closeParen);
+                    size_t candidateSemi = code.find(';', closeParen);
+                    if (candidateBrace != string::npos && (candidateSemi == string::npos || candidateBrace < candidateSemi)) {
+                        funcPos = searchPos;
+                        braceStart = candidateBrace;
+                        break;
+                    }
+                }
+            }
+        }
+        searchPos += funcName.length();
+    }
+
+    if (funcPos == string::npos || braceStart == string::npos) {
+        cout << "[Error] Function definition for '" << funcName << "' not found.\n";
+        return false;
+    }
+
+    int braceCount = 0;
+    output.clear();
+    bool inLineComment = false;
+    bool inBlockComment = false;
+    bool inQuotes = false;
+    bool inChar = false;
+
+    for (size_t i = braceStart; i < code.length(); i++) {
+        char ch = code[i];
+
+        if (inLineComment) {
+            if (ch == '\n') inLineComment = false;
+            output += ch;
+            continue;
+        }
+
+        if (inBlockComment) {
+            if (ch == '*' && i + 1 < code.length() && code[i + 1] == '/') {
+                inBlockComment = false;
+                output += ch;
+                output += code[i + 1];
+                i++;
+                continue;
+            }
+            output += ch;
+            continue;
+        }
+
+        if (inQuotes) {
+            if (ch == '\\' && i + 1 < code.length()) {
+                output += ch;
+                output += code[i + 1];
+                i++;
+                continue;
+            }
+            if (ch == '"') inQuotes = false;
+            output += ch;
+            continue;
+        }
+
+        if (inChar) {
+            if (ch == '\\' && i + 1 < code.length()) {
+                output += ch;
+                output += code[i + 1];
+                i++;
+                continue;
+            }
+            if (ch == '\'') inChar = false;
+            output += ch;
+            continue;
+        }
+
+        if (ch == '/' && i + 1 < code.length() && code[i + 1] == '/') {
+            inLineComment = true;
+            output += ch;
+            output += code[i + 1];
+            i++;
+            continue;
+        }
+        if (ch == '/' && i + 1 < code.length() && code[i + 1] == '*') {
+            inBlockComment = true;
+            output += ch;
+            output += code[i + 1];
+            i++;
+            continue;
+        }
+
+        if (ch == '"') {
+            inQuotes = true;
+            output += ch;
+            continue;
+        }
+        if (ch == '\'') {
+            inChar = true;
+            output += ch;
+            continue;
+        }
+
+        if (ch == '{') {
+            braceCount++;
+        } else if (ch == '}') {
+            braceCount--;
+        }
+        output += ch;
+
+        if (braceCount == 0) {
+            cout << "[Extractor] Function '" << funcName << "' extracted (" << output.length() << " characters).\n";
+            return true;
+        }
+    }
+
+    cout << "[Error] Unclosed function: Mismatched braces encountered.\n";
+    return false;
+}
