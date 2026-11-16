@@ -23,6 +23,22 @@ long long GetHighestPower(int k)
     }
   return power;
 }
+bool readFile(const string& path, string& content) {
+    ifstream inFile(path.c_str(), ios::binary);
+    if (!inFile.is_open()) {
+        return false;
+    }
+    content.assign((istreambuf_iterator<char>(inFile)), istreambuf_iterator<char>());
+    inFile.close();
+    return true;
+}
+
+string lineRange(int l1, int l2) {
+    if (l1 == 0) return "-";
+    if (l1 == l2) return "L" + to_string(l1);
+    return "L" + to_string(l1) + "-" + to_string(l2);
+}
+
 
 long long GetInitialHash(const string &text, int k)
 {
@@ -135,3 +151,94 @@ void freeHistory() {
     }
     head = NULL;
 }
+
+vector<Prepared> lastFiles;
+vector<PairResult> lastResults;
+
+bool hasCodeExtension(const fs::path& p) {
+    string ext = p.extension().string();
+    for (size_t i = 0; i < ext.length(); i++) ext[i] = toLowerChar(ext[i]);
+    return ext == ".c" || ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
+           ext == ".h" || ext == ".hpp" || ext == ".java";
+}
+
+bool loadFolder(const string& folder, bool normalize, vector<Prepared>& files) {
+    error_code ec;
+    if (!fs::is_directory(folder, ec)) {
+        cout << "[Error] '" << folder << "' is not a folder.\n";
+        return false;
+    }
+    vector<string> paths;
+    for (fs::recursive_directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec))
+        if (it->is_regular_file() && hasCodeExtension(it->path()))
+            paths.push_back(it->path().string());
+    sort(paths.begin(), paths.end());
+
+    files.clear();
+    for (size_t i = 0; i < paths.size(); i++) {
+        string content;
+        if (!readFile(paths[i], content)) {
+            cout << "[Warning] Could not read " << paths[i] << ", skipping.\n";
+            continue;
+        }
+        string rel = fs::relative(fs::path(paths[i]), fs::path(folder), ec).generic_string();
+        files.push_back(prepare(rel, content, normalize));
+    }
+    return true;
+}
+
+void scanFolder(const string& folder, int k, bool normalize) {
+    vector<Prepared> files;
+    if (!loadFolder(folder, normalize, files)) return;
+    int n = (int)files.size();
+    cout << "[Info] Loaded " << n << " source file(s) from '" << folder << "'.\n";
+    if (n < 2) {
+        cout << "[Error] Need at least 2 files for a pairwise comparison.\n";
+        return;
+    }
+
+    vector<SimpleHashTable> tables(n);
+    for (int i = 0; i < n; i++) buildTable(files[i].cleaned, k, tables[i]);
+
+    vector<PairResult> results;
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            PairResult r = comparePair(files[i], files[j], i, j, k, tables[i], tables[j]);
+            results.push_back(r);
+            addHistory(files[i].name + " vs " + files[j].name, k, r.score, r.collisions, r.block.length);
+        }
+    }
+
+    lastFiles = files;
+    lastResults = results;
+    printMatrix(files, results);
+    printRanking(files, results);
+}
+
+void exportCsv(const string& path) {
+    if (lastResults.empty()) {
+        cout << "[Info] Nothing to export yet. Run a folder scan first (Option 11).\n";
+        return;
+    }
+    ofstream out(path.c_str());
+    if (!out.is_open()) {
+        cout << "[Error] Cannot write " << path << "\n";
+        return;
+    }
+    out << "FileA,FileB,A_in_B_pct,B_in_A_pct,Similarity_pct,LongestBlockChars,LinesA,LinesB,Risk\n";
+    for (size_t i = 0; i < lastResults.size(); i++) {
+        const PairResult& r = lastResults[i];
+        out << lastFiles[r.a].name << "," << lastFiles[r.b].name << ","
+            << fixed << setprecision(2) << r.simAinB << "," << r.simBinA << "," << r.score << ","
+            << r.block.length << "," << lineRange(r.block.lineA1, r.block.lineA2) << ","
+            << lineRange(r.block.lineB1, r.block.lineB2) << "," << riskLabel(r.score) << "\n";
+    }
+    cout << "[Success] Exported " << lastResults.size() << " rows to " << path << "\n";
+}
+
+struct TestCase {
+    string title;
+    string description;
+    string a, b;
+    string expected;
+};
